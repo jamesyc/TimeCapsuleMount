@@ -2,7 +2,7 @@
 set -e
 
 # build URL lazily from env vars
-AFP_URL=${AFP_URL:-"afp://$AFP_USER:$AFP_PASS@$AFP_HOST/Data"}
+AFP_URL=${AFP_URL:-"afp://$TM_USER:$TM_PASS@$AFP_HOST/Data"}
 
 echo "Mounting $AFP_URL -> /mnt/timecapsule/Data ..."
 mount_afp -o allow_other "$AFP_URL" /mnt/timecapsule/Data
