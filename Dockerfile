@@ -15,11 +15,11 @@ RUN apt update && \
 COPY afpfs-ng ${AFPFS_NG_SRC_PATH}
 WORKDIR ${AFPFS_NG_SRC_PATH}
 
-# --- make autotools recognise modern CPUs (aarch64 etc.) ---
+# make autotools recognise modern CPUs (aarch64 etc.)
 RUN cp /usr/share/misc/config.guess ./ && \
     cp /usr/share/misc/config.sub   ./
 
-# --- stub-in identify.c if the snapshot lacks it ---
+# stub-in identify.c if the snapshot lacks it
 RUN test -f lib/identify.c || { \
         echo '/* stubbed by Docker build – original file absent */'  \
              > lib/identify.c && \
@@ -27,7 +27,7 @@ RUN test -f lib/identify.c || { \
              >> lib/identify.c ; \
     }
 
-# --- regenerate autotools metadata & build ---
+# regenerate autotools metadata & build
 RUN autoreconf -fi && \
     ./configure CFLAGS='-O2 -fcommon' --prefix=/usr && \
     make -j1 V=1 2>&1 | tee build.log && \
@@ -48,7 +48,7 @@ COPY --from=builder /usr/share/man/ /usr/share/man/
 RUN groupadd -r fuse && useradd -r -g fuse afpuser && \
     mkdir -p /mnt/timecapsule/Data && chown afpuser:fuse /mnt/timecapsule/Data && \
     echo "user_allow_other" >> /etc/fuse.conf
-    
+
 COPY entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
