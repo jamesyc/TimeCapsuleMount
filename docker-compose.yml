@@ -7,13 +7,34 @@ services:
       - .env
     environment:
       AFP_HOST: ${AFP_HOST}
-      AFP_USER: ${AFP_USER}
-      AFP_PASS: ${AFP_PASS}
+      USER: ${TM_USER}
+      PASS: ${TM_PASS}
     devices:
       - "/dev/fuse:/dev/fuse"
     cap_add:
       - SYS_ADMIN
     security_opt:
       - apparmor:unconfined
+    volumes:
+      - timemachine-data:/mnt/timecapsule
     restart: unless-stopped
 
+  timemachine:
+    image: mbentley/timemachine:smb
+    container_name: timemachine
+    hostname: timemachine
+    depends_on:
+      - timecapsule-mount
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - TM_USERNAME=${TM_USER}
+      - PASSWORD=${TM_PASS}
+      - SET_PERMISSIONS=false
+      - VOLUME_SIZE_LIMIT=0
+      - cache-entries-max=0
+    volumes:
+      - timemachine-data:/opt/timemachine
+
+volumes:
+  timemachine-data:
