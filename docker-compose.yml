@@ -21,7 +21,7 @@ services:
 
   timemachine:
     image: mbentley/timemachine:smb
-    container_name: timemachine
+    container_name: timecapsule-smb
     hostname: timemachine
     depends_on:
       - timecapsule-mount
