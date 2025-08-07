@@ -37,8 +37,7 @@ RUN autoreconf -fi && \
 FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS runtime
 RUN apt update && \
     apt install -y --no-install-recommends \
-        fuse3 libgcrypt20 libedit2 \
-        samba samba-common-bin avahi-daemon && \
+        fuse3 libgcrypt20 libedit2 && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/bin/ /usr/bin/
@@ -49,9 +48,7 @@ COPY --from=builder /usr/share/man/ /usr/share/man/
 RUN groupadd -r fuse && useradd -r -g fuse afpuser && \
     mkdir -p /mnt/timecapsule/Data && chown afpuser:fuse /mnt/timecapsule/Data && \
     echo "user_allow_other" >> /etc/fuse.conf
-
-COPY smb.conf /etc/samba/smb.conf
-
+    
 COPY entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
