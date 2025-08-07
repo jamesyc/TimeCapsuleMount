@@ -40,6 +40,21 @@ RUN apt update && \
         fuse3 libgcrypt20 libedit2 && \
     rm -rf /var/lib/apt/lists/*
 
+# Install Samba server + tools, s6, and attr; clean up apt caches
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        attr \
+        samba \
+        samba-common-bin \
+        s6 \
+    ; \
+    rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    touch /etc/samba/lmhosts; \
+    rm -f /etc/samba/smb.conf
+
 COPY --from=builder /usr/bin/ /usr/bin/
 COPY --from=builder /usr/lib/ /usr/lib/
 COPY --from=builder /usr/share/man/ /usr/share/man/
@@ -49,7 +64,10 @@ RUN groupadd -r fuse && useradd -r -g fuse afpuser && \
     mkdir -p /mnt/timecapsule/Data && chown afpuser:fuse /mnt/timecapsule/Data && \
     echo "user_allow_other" >> /etc/fuse.conf
 
-COPY entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY s6 /etc/s6
+COPY entrypoint.sh /
+
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["tail","-f","/dev/null"]

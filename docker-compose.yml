@@ -32,7 +32,6 @@ services:
       - PASSWORD=${TM_PASS}
       - SET_PERMISSIONS=false
       - VOLUME_SIZE_LIMIT=0
-      - cache-entries-max=0
     volumes:
       - timemachine-data:/opt/timemachine
 
