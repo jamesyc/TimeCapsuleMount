@@ -57,7 +57,8 @@ RUN groupadd -r fuse && \
 RUN set -eux; \
     apt update; \
     apt install -y --no-install-recommends \
-        attr samba samba-common-bin samba-vfs-modules smbclient; \
+        attr samba samba-common-bin samba-vfs-modules smbclient \
+        avahi-utils; \
     rm -rf /var/lib/apt/lists/*
 
 # Prepare Samba

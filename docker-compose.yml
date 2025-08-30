@@ -14,8 +14,10 @@ services:
     tmpfs:
       - /run/samba
     restart: unless-stopped
-    ports:
-      - "445:445"
+    network_mode: host
+    volumes:
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - /run/avahi-daemon/socket:/run/avahi-daemon/socket
     ulimits:
       nofile:
         soft: 65536

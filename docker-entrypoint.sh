@@ -2,7 +2,7 @@
 set -e
 
 # ----- configuration defaults -----
-SHARE_NAME="${SHARE_NAME:-TimeMachine}"
+TM_SHARE_NAME="${TM_SHARE_NAME:-Data}"
 CUSTOM_SMB_AUTH="${CUSTOM_SMB_AUTH:-no}"
 CUSTOM_SMB_CONF="${CUSTOM_SMB_CONF:-false}"
 CUSTOM_SMB_PROTO="${CUSTOM_SMB_PROTO:-SMB2}"
@@ -10,7 +10,7 @@ SMB_PORT="${SMB_PORT:-445}"
 CUSTOM_USER="${CUSTOM_USER:-false}"
 TM_USERNAME="${TM_USERNAME:-timemachine}"
 TM_GROUPNAME="${TM_GROUPNAME:-timemachine}"
-PASSWORD="${PASSWORD:-${AFP_PASS:-}}"
+TM_PASSWORD="${TM_PASSWORD:-${AFP_PASS:-}}"
 VOLUME_SIZE_LIMIT="${VOLUME_SIZE_LIMIT:-0}"
 WORKGROUP="${WORKGROUP:-WORKGROUP}"
 HIDE_SHARES="${HIDE_SHARES:-no}"
@@ -19,6 +19,8 @@ SMB_INHERIT_PERMISSIONS="${SMB_INHERIT_PERMISSIONS:-no}"
 SMB_NFS_ACES="${SMB_NFS_ACES:-no}"
 SMB_METADATA="${SMB_METADATA:-stream}"
 MIMIC_MODEL="${MIMIC_MODEL:-TimeCapsule8,119}"
+# Bonjour instance name (defaults to container hostname)
+AVAHI_INSTANCE_NAME="${AVAHI_INSTANCE_NAME:-${HOSTNAME:-TimeMachine}}"
 
 # support both PUID/TM_UID and PGID/TM_GID
 PUID="${PUID:-1000}"
@@ -54,9 +56,9 @@ ensure_unix_identities() {
   else
     log "Creating user ${TM_USERNAME} (${TM_UID}:${TM_GID})"
     adduser --uid "${TM_UID}" --gid "${TM_GID}" --home "/home/${TM_USERNAME}" --shell /bin/false --disabled-password "${TM_USERNAME}"
-    if [ -n "${PASSWORD}" ]; then
+    if [ -n "${TM_PASSWORD}" ]; then
       log "Setting local password for ${TM_USERNAME}"
-      echo "${TM_USERNAME}:${PASSWORD}" | chpasswd
+      echo "${TM_USERNAME}:${TM_PASSWORD}" | chpasswd
     fi
   fi
 }
@@ -92,10 +94,10 @@ EOF
 }
 
 append_smb_share() {
-  log "Generating share section [${SHARE_NAME}]"
+  log "Generating share section [${TM_SHARE_NAME}]"
   cat >> /etc/samba/smb.conf <<EOF
 
-[${SHARE_NAME}]
+[${TM_SHARE_NAME}]
    path = /mnt/timecapsule
    inherit permissions = ${SMB_INHERIT_PERMISSIONS}
    read only = no
@@ -116,11 +118,25 @@ prepare_samba_config() {
   fi
 }
 
+# Configure mDNS/Bonjour advertisement using host Avahi (DBus) only
+setup_avahi() {
+  if command -v avahi-publish >/dev/null 2>&1 && [ -S /run/dbus/system_bus_socket ]; then
+    log "Publishing Bonjour services via host Avahi (DBus)"
+    avahi-publish -s "${AVAHI_INSTANCE_NAME}" _smb._tcp ${SMB_PORT} &
+    avahi-publish -s "${AVAHI_INSTANCE_NAME}" _device-info._tcp 0 "model=${MIMIC_MODEL}" &
+    avahi-publish -s "${AVAHI_INSTANCE_NAME}" _adisk._tcp 9 \
+      "dk0=adVN=${TM_SHARE_NAME},adVF=0x82" \
+      "sys=waMa=0,adVF=0x82" &
+  else
+    log "avahi-publish or DBus socket unavailable; skipping Bonjour advertising"
+  fi
+}
+
 # Required samba inputs (may have defaults)
 [ -n "${TM_USERNAME}" ] || die "TM_USERNAME missing"
 [ -n "${TM_GROUPNAME}" ] || die "TM_GROUPNAME missing"
-[ -n "${PASSWORD}" ] || die "PASSWORD missing"
-[ -n "${SHARE_NAME}" ] || die "SHARE_NAME missing"
+[ -n "${TM_PASSWORD}" ] || die "TM_PASSWORD missing"
+[ -n "${TM_SHARE_NAME}" ] || die "TM_SHARE_NAME missing"
 [ -n "${TM_UID}" ] || die "TM_UID missing"
 [ -n "${TM_GID}" ] || die "TM_GID missing"
 
@@ -129,17 +145,18 @@ mkdir -p /mnt/timecapsule
 ensure_unix_identities
 
 # Set up AFP mount point
-AFP_URL=${AFP_URL:-"afp://${AFP_USER}:${AFP_PASS}@${AFP_HOST}/Data"}
+AFP_URL=${AFP_URL:-"afp://${AFP_USER}:${AFP_PASS}@${AFP_HOST}/${AFP_SHARE}"}
 log "Mounting ${AFP_URL} -> /mnt/timecapsule as user=${TM_USERNAME},group=${TM_GROUPNAME}"
 mount_afp -o user=${TM_USERNAME},group=${TM_GROUPNAME} "${AFP_URL}" /mnt/timecapsule
 log "Mounted ${AFP_URL}"
 
 # Set up Samba
 prepare_samba_config
+setup_avahi
 log "Provisioning Samba user ${TM_USERNAME}"
 smbpasswd -L -a -n "${TM_USERNAME}"
 smbpasswd -L -e -n "${TM_USERNAME}"
-printf "%s\n%s\n" "${PASSWORD}" "${PASSWORD}" | smbpasswd -L -s "${TM_USERNAME}"
+printf "%s\n%s\n" "${TM_PASSWORD}" "${TM_PASSWORD}" | smbpasswd -L -s "${TM_USERNAME}"
 chown -v "${TM_USERNAME}":"${TM_GROUPNAME}" /mnt/timecapsule
 chmod -v 777 /mnt/timecapsule
 
