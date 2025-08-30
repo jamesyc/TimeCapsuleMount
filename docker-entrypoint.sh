@@ -20,7 +20,8 @@ SMB_NFS_ACES="${SMB_NFS_ACES:-no}"
 SMB_METADATA="${SMB_METADATA:-stream}"
 MIMIC_MODEL="${MIMIC_MODEL:-TimeCapsule8,119}"
 # Bonjour instance name (defaults to container hostname)
-AVAHI_INSTANCE_NAME="${AVAHI_INSTANCE_NAME:-${HOSTNAME:-TimeMachine}}"
+#AVAHI_INSTANCE_NAME="${AVAHI_INSTANCE_NAME:-${HOSTNAME:-TimeMachine}}"
+AVAHI_INSTANCE_NAME="${AVAHI_INSTANCE_NAME:-Airport Time Capsule}"
 
 # support both PUID/TM_UID and PGID/TM_GID
 PUID="${PUID:-1000}"
@@ -77,6 +78,7 @@ security = user
 server min protocol = ${CUSTOM_SMB_PROTO}
 ntlm auth = ${CUSTOM_SMB_AUTH}
 server role = standalone server
+netbios name = ${AVAHI_INSTANCE_NAME}
 smb ports = ${SMB_PORT}
 workgroup = ${WORKGROUP}
 vfs objects = ${SMB_VFS_OBJECTS}
