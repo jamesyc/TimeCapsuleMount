@@ -4,7 +4,8 @@ FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS builder
 ARG AFPFS_NG_SRC_PATH=/src/afpfs-ng
 
 # tool-chain + all libs the upstream build expects
-RUN apt update && \
+RUN set -eux; \
+    apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
         g++ make autoconf automake libtool pkg-config dh-autoreconf \
         libfuse-dev libncurses5-dev libedit-dev libgcrypt20-dev \
@@ -35,40 +36,39 @@ RUN autoreconf -fi && \
 
 # ---------- runtime stage ----------
 FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS runtime
-RUN apt update && \
+
+# Install afpfs-ng runtime dependencies; clean up apt caches
+RUN set -eux; \
+    apt update && \
     apt install -y --no-install-recommends \
         fuse3 libgcrypt20 libedit2 && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Samba server + tools, s6, and attr; clean up apt caches
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-        attr \
-        samba \
-        samba-common-bin \
-        s6 \
-    ; \
-    rm -rf /var/lib/apt/lists/*
-
-RUN set -eux; \
-    touch /etc/samba/lmhosts; \
-    rm -f /etc/samba/smb.conf
-
+# Copy afpfs-ng from the build stage
 COPY --from=builder /usr/bin/ /usr/bin/
 COPY --from=builder /usr/lib/ /usr/lib/
 COPY --from=builder /usr/share/man/ /usr/share/man/
 
 # prepare FUSE
-RUN groupadd -r fuse && useradd -r -g fuse afpuser && \
-    mkdir -p /mnt/timecapsule/Data && chown afpuser:fuse /mnt/timecapsule/Data && \
+RUN groupadd -r fuse && \
     echo "user_allow_other" >> /etc/fuse.conf
 
-COPY s6 /etc/s6
-COPY entrypoint.sh /
+# Install Samba server; clean up apt caches
+RUN set -eux; \
+    apt update; \
+    apt install -y --no-install-recommends \
+        attr samba samba-common-bin samba-vfs-modules smbclient; \
+    rm -rf /var/lib/apt/lists/*
+
+# Prepare Samba
+RUN set -eux; \
+    touch /etc/samba/lmhosts; \
+    rm -f /etc/samba/smb.conf
+
+# COPY entrypoint.sh /
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["tail","-f","/dev/null"]
-
+# No default CMD needed; entrypoint starts smbd
+CMD []

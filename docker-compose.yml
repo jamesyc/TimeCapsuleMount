@@ -7,33 +7,20 @@ services:
       - .env
     environment:
       AFP_HOST: ${AFP_HOST}
-      USER: ${TM_USER}
-      PASS: ${TM_PASS}
     devices:
       - "/dev/fuse:/dev/fuse"
     cap_add:
       - SYS_ADMIN
     security_opt:
       - apparmor:unconfined
-    volumes:
-      - timemachine-data:/mnt/timecapsule
+    # No persistent volume needed; AFP mounted at /mnt/timecapsule
+    tmpfs:
+      - /run/samba
     restart: unless-stopped
-
-  timemachine:
-    image: mbentley/timemachine:smb
-    container_name: timecapsule-smb
-    hostname: timemachine
-    depends_on:
-      - timecapsule-mount
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      - TM_USERNAME=${TM_USER}
-      - PASSWORD=${TM_PASS}
-      - SET_PERMISSIONS=false
-      - VOLUME_SIZE_LIMIT=0
-    volumes:
-      - timemachine-data:/opt/timemachine
-
-volumes:
-  timemachine-data:
+    ports:
+      - "445:445"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    # timemachine service omitted; SMB is integrated here
