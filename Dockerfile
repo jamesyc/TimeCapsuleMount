@@ -3,7 +3,7 @@ FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS builder
 
 ARG AFPFS_NG_SRC_PATH=/src/afpfs-ng
 
-# tool-chain + all libs the upstream build expects
+# Tool-chain + all libs the upstream build expects
 RUN set -eux; \
     apt update && \
     DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
@@ -12,15 +12,15 @@ RUN set -eux; \
         libreadline-dev git ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# copy the repo already cloned beside this Dockerfile
+# Copy the repo already cloned beside this Dockerfile
 COPY afpfs-ng ${AFPFS_NG_SRC_PATH}
 WORKDIR ${AFPFS_NG_SRC_PATH}
 
-# make autotools recognise modern CPUs (aarch64 etc.)
+# Make autotools recognise modern CPUs (aarch64 etc.)
 RUN cp /usr/share/misc/config.guess ./ && \
     cp /usr/share/misc/config.sub   ./
 
-# stub-in identify.c if the snapshot lacks it
+# Stub-in identify.c if the snapshot lacks it
 RUN test -f lib/identify.c || { \
         echo '/* stubbed by Docker build – original file absent */'  \
              > lib/identify.c && \
@@ -28,7 +28,7 @@ RUN test -f lib/identify.c || { \
              >> lib/identify.c ; \
     }
 
-# regenerate autotools metadata & build
+# Regenerate autotools metadata & build
 RUN autoreconf -fi && \
     ./configure CFLAGS='-O2 -fcommon' --prefix=/usr && \
     make -j1 V=1 2>&1 | tee build.log && \
@@ -65,10 +65,8 @@ RUN set -eux; \
     touch /etc/samba/lmhosts; \
     rm -f /etc/samba/smb.conf
 
-# COPY entrypoint.sh /
-
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-# No default CMD needed; entrypoint starts smbd
-CMD []
+# Default command handed to the entrypoint
+CMD ["smbd","-F","--no-process-group","--configfile=/etc/samba/smb.conf"]

@@ -5,15 +5,12 @@ services:
     container_name: timecapsule-mount
     env_file:
       - .env
-    environment:
-      AFP_HOST: ${AFP_HOST}
     devices:
       - "/dev/fuse:/dev/fuse"
     cap_add:
       - SYS_ADMIN
     security_opt:
       - apparmor:unconfined
-    # No persistent volume needed; AFP mounted at /mnt/timecapsule
     tmpfs:
       - /run/samba
     restart: unless-stopped
@@ -23,4 +20,3 @@ services:
       nofile:
         soft: 65536
         hard: 65536
-    # timemachine service omitted; SMB is integrated here
