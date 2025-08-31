@@ -5,8 +5,9 @@ set -e
 TM_SHARE_NAME="${TM_SHARE_NAME:-Data}"
 CUSTOM_SMB_AUTH="${CUSTOM_SMB_AUTH:-no}"
 CUSTOM_SMB_CONF="${CUSTOM_SMB_CONF:-false}"
-CUSTOM_SMB_PROTO="${CUSTOM_SMB_PROTO:-SMB2}"
+CUSTOM_SMB_PROTO="${CUSTOM_SMB_PROTO:-SMB3}"
 SMB_PORT="${SMB_PORT:-445}"
+SMB_DISABLE_NETBIOS="${SMB_DISABLE_NETBIOS:-yes}"
 CUSTOM_USER="${CUSTOM_USER:-false}"
 TM_USERNAME="${TM_USERNAME:-timemachine}"
 TM_GROUPNAME="${TM_GROUPNAME:-timemachine}"
@@ -19,9 +20,25 @@ SMB_INHERIT_PERMISSIONS="${SMB_INHERIT_PERMISSIONS:-no}"
 SMB_NFS_ACES="${SMB_NFS_ACES:-no}"
 SMB_METADATA="${SMB_METADATA:-stream}"
 MIMIC_MODEL="${MIMIC_MODEL:-TimeCapsule8,119}"
-# Bonjour instance name (defaults to container hostname)
+# Bonjour instance name
 #AVAHI_INSTANCE_NAME="${AVAHI_INSTANCE_NAME:-${HOSTNAME:-TimeMachine}}"
 AVAHI_INSTANCE_NAME="${AVAHI_INSTANCE_NAME:-Airport Time Capsule}"
+
+# AFP/Samba share tunables
+AFP_KEEPALIVE="${AFP_KEEPALIVE:-60}"
+SMB_KEEPALIVE="${SMB_KEEPALIVE:-60}"
+SMB_DEADTIME="${SMB_DEADTIME:-0}"
+SMB_SMB2_LEASES="${SMB_SMB2_LEASES:-yes}"
+SMB_DURABLE_HANDLES="${SMB_DURABLE_HANDLES:-yes}"
+SMB_AIO_READ_SIZE="${SMB_AIO_READ_SIZE:-}"
+SMB_AIO_WRITE_SIZE="${SMB_AIO_WRITE_SIZE:-}"
+SMB_LOG_LEVEL="${SMB_LOG_LEVEL:-3}"
+SMB_FRUIT_RESOURCE="${SMB_FRUIT_RESOURCE:-stream}"
+SMB_FRUIT_ENCODING="${SMB_FRUIT_ENCODING:-native}"
+SMB_STREAMS_XATTR_PREFIX="${SMB_STREAMS_XATTR_PREFIX:-user.}"
+SMB_EA_SUPPORT="${SMB_EA_SUPPORT:-yes}"
+SMB_FORCE_USER="${SMB_FORCE_USER:-${TM_USERNAME}}"
+CLEAN_STALE_BUNDLE_LOCKS="${CLEAN_STALE_BUNDLE_LOCKS:-yes}"
 
 # support both PUID/TM_UID and PGID/TM_GID
 PUID="${PUID:-1000}"
@@ -33,6 +50,35 @@ TM_GID="${TM_GID:-${PGID:-${TM_UID}}}"
 log() { echo "INFO: $*"; }
 err() { echo "ERROR: $*" >&2; }
 die() { err "$*"; exit 1; }
+
+clean_stale_timemachine_artifacts() {
+  [ "${CLEAN_STALE_BUNDLE_LOCKS}" = "yes" ] || { log "Stale bundle cleanup disabled"; return; }
+
+  BASE="/mnt/timecapsule"
+  [ -d "${BASE}" ] || return
+
+  for bundle in "${BASE}"/*.sparsebundle; do
+    [ -d "${bundle}" ] || continue
+    name="$(basename "${bundle}")"
+
+    # Remove zero-byte/leftover lock file if present
+    if [ -e "${bundle}/lock" ]; then
+      sz=$(wc -c < "${bundle}/lock" 2>/dev/null || echo "?")
+      log "Found lock in ${name} (size=${sz}); attempting cleanup"
+      # Be defensive around FUSE oddities: try multiple strategies, ignore errors
+      rm -f "${bundle}/lock" 2>/dev/null || true
+      : > "${bundle}/lock" 2>/dev/null || true
+      chmod u+w "${bundle}/lock" 2>/dev/null || true
+      rm -f "${bundle}/lock" 2>/dev/null || true
+    fi
+
+    # Remove leftover temp MachineID file if present
+    if [ -e "${bundle}/com.apple.TimeMachine.MachineID.plist.tmp" ]; then
+      log "Removing leftover MachineID .tmp in ${name}"
+      rm -f "${bundle}/com.apple.TimeMachine.MachineID.plist.tmp" 2>/dev/null || true
+    fi
+  done
+}
 
 ensure_unix_identities() {
   [ "${CUSTOM_USER}" = "true" ] && { log "CUSTOM_USER=true; using existing user/group"; return; }
@@ -74,25 +120,34 @@ load printers = no
 log file = /var/log/samba/log.%m
 logging = file
 max log size = 1000
+log level = ${SMB_LOG_LEVEL}
 security = user
 server min protocol = ${CUSTOM_SMB_PROTO}
 ntlm auth = ${CUSTOM_SMB_AUTH}
 server role = standalone server
-netbios name = ${AVAHI_INSTANCE_NAME}
 smb ports = ${SMB_PORT}
+disable netbios = ${SMB_DISABLE_NETBIOS}
+netbios name = ${AVAHI_INSTANCE_NAME}
 workgroup = ${WORKGROUP}
 vfs objects = ${SMB_VFS_OBJECTS}
 fruit:aapl = yes
 fruit:nfs_aces = ${SMB_NFS_ACES}
 fruit:model = ${MIMIC_MODEL}
 fruit:metadata = ${SMB_METADATA}
+fruit:resource = ${SMB_FRUIT_RESOURCE}
+fruit:encoding = ${SMB_FRUIT_ENCODING}
 fruit:veto_appledouble = no
 fruit:posix_rename = yes
 fruit:zero_file_id = yes
 fruit:wipe_intentionally_left_blank_rfork = yes
 fruit:delete_empty_adfiles = yes
+ea support = ${SMB_EA_SUPPORT}
+keepalive = ${SMB_KEEPALIVE}
+deadtime = ${SMB_DEADTIME}
+smb2 leases = ${SMB_SMB2_LEASES}
+durable handles = ${SMB_DURABLE_HANDLES}
+streams_xattr:prefix = ${SMB_STREAMS_XATTR_PREFIX}
 EOF
-  mkdir -p /var/lib/samba/private /var/log/samba/cores
 }
 
 append_smb_share() {
@@ -108,6 +163,18 @@ append_smb_share() {
    fruit:time machine = yes
    fruit:time machine max size = ${VOLUME_SIZE_LIMIT}
 EOF
+
+  # Append optional AIO settings if provided
+  if [ -n "${SMB_AIO_READ_SIZE}" ]; then
+    echo "   aio read size = ${SMB_AIO_READ_SIZE}" >> /etc/samba/smb.conf
+  fi
+  if [ -n "${SMB_AIO_WRITE_SIZE}" ]; then
+    echo "   aio write size = ${SMB_AIO_WRITE_SIZE}" >> /etc/samba/smb.conf
+  fi
+
+  if [ -n "${SMB_FORCE_USER}" ]; then
+    echo "   force user = ${SMB_FORCE_USER}" >> /etc/samba/smb.conf
+  fi
 }
 
 prepare_samba_config() {
@@ -120,17 +187,34 @@ prepare_samba_config() {
   fi
 }
 
-# Configure mDNS/Bonjour advertisement using host Avahi (DBus) only
+# Keep AFP session alive to avoid idle disconnects on some devices
+start_afp_keepalive() {
+  # Numeric and greater than zero
+  if [ "${AFP_KEEPALIVE}" -gt 0 ] 2>/dev/null; then
+    {
+      touch /mnt/timecapsule/.afp_keepalive 2>/dev/null || true
+      while true; do
+        stat /mnt/timecapsule/.afp_keepalive >/dev/null 2>&1 || true
+        sleep "${AFP_KEEPALIVE}"
+      done
+    } &
+    log "AFP keepalive started (interval=${AFP_KEEPALIVE}s)"
+  else
+    log "AFP keepalive disabled"
+  fi
+}
+
+# Configure mDNS/Bonjour advertisement using host Avahi (DBus)
 setup_avahi() {
   if command -v avahi-publish >/dev/null 2>&1 && [ -S /run/dbus/system_bus_socket ]; then
-    log "Publishing Bonjour services via host Avahi (DBus)"
+    log "Publishing mDNS/Bonjour services via host Avahi (DBus)"
     avahi-publish -s "${AVAHI_INSTANCE_NAME}" _smb._tcp ${SMB_PORT} &
     avahi-publish -s "${AVAHI_INSTANCE_NAME}" _device-info._tcp 0 "model=${MIMIC_MODEL}" &
     avahi-publish -s "${AVAHI_INSTANCE_NAME}" _adisk._tcp 9 \
       "dk0=adVN=${TM_SHARE_NAME},adVF=0x82" \
       "sys=waMa=0,adVF=0x82" &
   else
-    log "avahi-publish or DBus socket unavailable; skipping Bonjour advertising"
+    log "avahi-publish or DBus socket unavailable; skipping mDNS/Bonjour advertising"
   fi
 }
 
@@ -152,9 +236,18 @@ log "Mounting ${AFP_URL} -> /mnt/timecapsule as user=${TM_USERNAME},group=${TM_G
 mount_afp -o user=${TM_USERNAME},group=${TM_GROUPNAME} "${AFP_URL}" /mnt/timecapsule
 log "Mounted ${AFP_URL}"
 
+# Clean up any stale TM artefacts before exporting via SMB
+clean_stale_timemachine_artifacts
+
+# Start AFP keepalive loop
+start_afp_keepalive
+
 # Set up Samba
 prepare_samba_config
 setup_avahi
+mkdir -p /var/lib/samba/private /var/log/samba/cores
+chmod 0700 /var/log/samba/cores || true
+chown root:root /var/log/samba/cores 2>/dev/null || true
 log "Provisioning Samba user ${TM_USERNAME}"
 smbpasswd -L -a -n "${TM_USERNAME}"
 smbpasswd -L -e -n "${TM_USERNAME}"
