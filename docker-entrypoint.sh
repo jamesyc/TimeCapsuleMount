@@ -1,50 +1,55 @@
 #!/bin/sh
 set -e
 
-# ----- configuration defaults -----
-TM_SHARE_NAME="${TM_SHARE_NAME:-Data}"
-CUSTOM_SMB_AUTH="${CUSTOM_SMB_AUTH:-no}"
-CUSTOM_SMB_CONF="${CUSTOM_SMB_CONF:-false}"
-CUSTOM_SMB_PROTO="${CUSTOM_SMB_PROTO:-SMB3}"
-SMB_PORT="${SMB_PORT:-445}"
-SMB_DISABLE_NETBIOS="${SMB_DISABLE_NETBIOS:-yes}"
-CUSTOM_USER="${CUSTOM_USER:-false}"
-TM_USERNAME="${TM_USERNAME:-timemachine}"
-TM_GROUPNAME="${TM_GROUPNAME:-timemachine}"
-TM_PASSWORD="${TM_PASSWORD:-${AFP_PASS:-}}"
-VOLUME_SIZE_LIMIT="${VOLUME_SIZE_LIMIT:-0}"
-WORKGROUP="${WORKGROUP:-WORKGROUP}"
-HIDE_SHARES="${HIDE_SHARES:-no}"
-SMB_VFS_OBJECTS="${SMB_VFS_OBJECTS:-fruit streams_xattr}"
-SMB_INHERIT_PERMISSIONS="${SMB_INHERIT_PERMISSIONS:-no}"
-SMB_NFS_ACES="${SMB_NFS_ACES:-no}"
-SMB_METADATA="${SMB_METADATA:-stream}"
-MIMIC_MODEL="${MIMIC_MODEL:-TimeCapsule8,119}"
-# Bonjour instance name
-#AVAHI_INSTANCE_NAME="${AVAHI_INSTANCE_NAME:-${HOSTNAME:-TimeMachine}}"
-AVAHI_INSTANCE_NAME="${AVAHI_INSTANCE_NAME:-Airport Time Capsule}"
+# General configuration defaults
+TM_SHARE="${TM_SHARE:-Data}"
 
-# AFP/Samba share tunables
+# AFP setup
 AFP_KEEPALIVE="${AFP_KEEPALIVE:-60}"
+CLEAN_STALE_BUNDLE_LOCKS="${CLEAN_STALE_BUNDLE_LOCKS:-yes}"
+
+# SMB setup defaults
+CUSTOM_SMB_CONF="${CUSTOM_SMB_CONF:-false}"
+SMB_USER="${SMB_USER:-timemachine}"
+SMB_GROUP="${SMB_GROUP:-timemachine}"
+SMB_PASS="${SMB_PASS:-${AFP_PASS:-}}"
+
+# SMB conf defaults
+SMB_HIDE_SHARES="${SMB_HIDE_SHARES:-yes}"
+SMB_INHERIT_PERMISSIONS="${SMB_INHERIT_PERMISSIONS:-no}"
+SMB_LOG_LEVEL="${SMB_LOG_LEVEL:-3}"
+SMB_PORT="${SMB_PORT:-445}"
+WORKGROUP="${WORKGROUP:-WORKGROUP}"
+SMB_NFS_ACES="${SMB_NFS_ACES:-no}"
+SMB_MIMIC_MODEL="${SMB_MIMIC_MODEL:-TimeCapsule8,119}"
+SMB_METADATA="${SMB_METADATA:-stream}"
+SMB_FRUIT_RESOURCE="${SMB_FRUIT_RESOURCE:-stream}"
+SMB_FRUIT_ENCODING="${SMB_FRUIT_ENCODING:-native}"
+SMB_EA_SUPPORT="${SMB_EA_SUPPORT:-yes}"
 SMB_KEEPALIVE="${SMB_KEEPALIVE:-60}"
 SMB_DEADTIME="${SMB_DEADTIME:-0}"
 SMB_SMB2_LEASES="${SMB_SMB2_LEASES:-yes}"
 SMB_DURABLE_HANDLES="${SMB_DURABLE_HANDLES:-yes}"
+SMB_STREAMS_XATTR_PREFIX="${SMB_STREAMS_XATTR_PREFIX:-user.}"
+
+# Samba conf optionals
 SMB_AIO_READ_SIZE="${SMB_AIO_READ_SIZE:-}"
 SMB_AIO_WRITE_SIZE="${SMB_AIO_WRITE_SIZE:-}"
-SMB_LOG_LEVEL="${SMB_LOG_LEVEL:-3}"
-SMB_FRUIT_RESOURCE="${SMB_FRUIT_RESOURCE:-stream}"
-SMB_FRUIT_ENCODING="${SMB_FRUIT_ENCODING:-native}"
-SMB_STREAMS_XATTR_PREFIX="${SMB_STREAMS_XATTR_PREFIX:-user.}"
-SMB_EA_SUPPORT="${SMB_EA_SUPPORT:-yes}"
-SMB_FORCE_USER="${SMB_FORCE_USER:-${TM_USERNAME}}"
-CLEAN_STALE_BUNDLE_LOCKS="${CLEAN_STALE_BUNDLE_LOCKS:-yes}"
+SMB_FORCE_USER="${SMB_FORCE_USER:-${SMB_USER}}"
 
-# support both PUID/TM_UID and PGID/TM_GID
+# SMB share defaults
+SMB_VFS_OBJECTS="${SMB_VFS_OBJECTS:-fruit streams_xattr}"
+VOLUME_SIZE_LIMIT="${VOLUME_SIZE_LIMIT:-0}"
+
+# Avahi setup
+#AVAHI_INSTANCE_NAME="${AVAHI_INSTANCE_NAME:-${HOSTNAME:-TimeMachine}}"
+AVAHI_INSTANCE_NAME="${AVAHI_INSTANCE_NAME:-Airport Time Capsule}"
+
+# Support both PUID/SMB_UID and PGID/SMB_GID
 PUID="${PUID:-1000}"
 PGID="${PGID:-${PUID}}"
-TM_UID="${TM_UID:-${PUID}}"
-TM_GID="${TM_GID:-${PGID:-${TM_UID}}}"
+SMB_UID="${SMB_UID:-${PUID}}"
+SMB_GID="${SMB_GID:-${PGID:-${SMB_UID}}}"
 
 # ----- small helpers -----
 log() { echo "INFO: $*"; }
@@ -81,31 +86,29 @@ clean_stale_timemachine_artifacts() {
 }
 
 ensure_unix_identities() {
-  [ "${CUSTOM_USER}" = "true" ] && { log "CUSTOM_USER=true; using existing user/group"; return; }
-
   # group
-  if grep -q -E "^${TM_GROUPNAME}:" /etc/group >/dev/null 2>&1; then
-    log "Group ${TM_GROUPNAME} exists; skipping"
+  if grep -q -E "^${SMB_GROUP}:" /etc/group >/dev/null 2>&1; then
+    log "Group ${SMB_GROUP} exists; skipping"
   else
-    if awk -F ':' '{print $3}' /etc/group | grep -q "^${TM_GID}$"; then
-      EXISTING_GROUP="$(grep ":${TM_GID}:" /etc/group | awk -F ':' '{print $1}')"
-      log "Group with GID ${TM_GID} exists as '${EXISTING_GROUP}'; renaming to '${TM_GROUPNAME}'"
-      sed -i "s/^${EXISTING_GROUP}:/${TM_GROUPNAME}:/g" /etc/group
+    if awk -F ':' '{print $3}' /etc/group | grep -q "^${SMB_GID}$"; then
+      EXISTING_GROUP="$(grep ":${SMB_GID}:" /etc/group | awk -F ':' '{print $1}')"
+      log "Group with GID ${SMB_GID} exists as '${EXISTING_GROUP}'; renaming to '${SMB_GROUP}'"
+      sed -i "s/^${EXISTING_GROUP}:/${SMB_GROUP}:/g" /etc/group
     else
-      log "Creating group ${TM_GROUPNAME} (${TM_GID})"
-      addgroup --gid "${TM_GID}" "${TM_GROUPNAME}"
+      log "Creating group ${SMB_GROUP} (${SMB_GID})"
+      addgroup --gid "${SMB_GID}" "${SMB_GROUP}"
     fi
   fi
 
   # user
-  if id -u "${TM_USERNAME}" >/dev/null 2>&1; then
-    log "User ${TM_USERNAME} exists; skipping"
+  if id -u "${SMB_USER}" >/dev/null 2>&1; then
+    log "User ${SMB_USER} exists; skipping"
   else
-    log "Creating user ${TM_USERNAME} (${TM_UID}:${TM_GID})"
-    adduser --uid "${TM_UID}" --gid "${TM_GID}" --home "/home/${TM_USERNAME}" --shell /bin/false --disabled-password "${TM_USERNAME}"
-    if [ -n "${TM_PASSWORD}" ]; then
-      log "Setting local password for ${TM_USERNAME}"
-      echo "${TM_USERNAME}:${TM_PASSWORD}" | chpasswd
+    log "Creating user ${SMB_USER} (${SMB_UID}:${SMB_GID})"
+    adduser --uid "${SMB_UID}" --gid "${SMB_GID}" --home "/home/${SMB_USER}" --shell /bin/false --disabled-password "${SMB_USER}"
+    if [ -n "${SMB_PASS}" ]; then
+      log "Setting local password for ${SMB_USER}"
+      echo "${SMB_USER}:${SMB_PASS}" | chpasswd
     fi
   fi
 }
@@ -113,8 +116,8 @@ ensure_unix_identities() {
 write_smb_global() {
   cat > /etc/samba/smb.conf <<EOF
 [global]
-access based share enum = ${HIDE_SHARES}
-hide unreadable = ${HIDE_SHARES}
+access based share enum = ${SMB_HIDE_SHARES}
+hide unreadable = ${SMB_HIDE_SHARES}
 inherit permissions = ${SMB_INHERIT_PERMISSIONS}
 load printers = no
 log file = /var/log/samba/log.%m
@@ -122,17 +125,16 @@ logging = file
 max log size = 1000
 log level = ${SMB_LOG_LEVEL}
 security = user
-server min protocol = ${CUSTOM_SMB_PROTO}
-ntlm auth = ${CUSTOM_SMB_AUTH}
+server min protocol = SMB3
+ntlm auth = no
 server role = standalone server
 smb ports = ${SMB_PORT}
-disable netbios = ${SMB_DISABLE_NETBIOS}
+disable netbios = yes
 netbios name = ${AVAHI_INSTANCE_NAME}
 workgroup = ${WORKGROUP}
-vfs objects = ${SMB_VFS_OBJECTS}
 fruit:aapl = yes
 fruit:nfs_aces = ${SMB_NFS_ACES}
-fruit:model = ${MIMIC_MODEL}
+fruit:model = ${SMB_MIMIC_MODEL}
 fruit:metadata = ${SMB_METADATA}
 fruit:resource = ${SMB_FRUIT_RESOURCE}
 fruit:encoding = ${SMB_FRUIT_ENCODING}
@@ -151,14 +153,14 @@ EOF
 }
 
 append_smb_share() {
-  log "Generating share section [${TM_SHARE_NAME}]"
+  log "Generating share section [${TM_SHARE}]"
   cat >> /etc/samba/smb.conf <<EOF
 
-[${TM_SHARE_NAME}]
+[${TM_SHARE}]
    path = /mnt/timecapsule
    inherit permissions = ${SMB_INHERIT_PERMISSIONS}
    read only = no
-   valid users = ${TM_USERNAME}
+   valid users = ${SMB_USER}
    vfs objects = ${SMB_VFS_OBJECTS}
    fruit:time machine = yes
    fruit:time machine max size = ${VOLUME_SIZE_LIMIT}
@@ -171,7 +173,6 @@ EOF
   if [ -n "${SMB_AIO_WRITE_SIZE}" ]; then
     echo "   aio write size = ${SMB_AIO_WRITE_SIZE}" >> /etc/samba/smb.conf
   fi
-
   if [ -n "${SMB_FORCE_USER}" ]; then
     echo "   force user = ${SMB_FORCE_USER}" >> /etc/samba/smb.conf
   fi
@@ -209,9 +210,9 @@ setup_avahi() {
   if command -v avahi-publish >/dev/null 2>&1 && [ -S /run/dbus/system_bus_socket ]; then
     log "Publishing mDNS/Bonjour services via host Avahi (DBus)"
     avahi-publish -s "${AVAHI_INSTANCE_NAME}" _smb._tcp ${SMB_PORT} &
-    avahi-publish -s "${AVAHI_INSTANCE_NAME}" _device-info._tcp 0 "model=${MIMIC_MODEL}" &
+    avahi-publish -s "${AVAHI_INSTANCE_NAME}" _device-info._tcp 0 "model=${SMB_MIMIC_MODEL}" &
     avahi-publish -s "${AVAHI_INSTANCE_NAME}" _adisk._tcp 9 \
-      "dk0=adVN=${TM_SHARE_NAME},adVF=0x82" \
+      "dk0=adVN=${TM_SHARE},adVF=0x82" \
       "sys=waMa=0,adVF=0x82" &
   else
     log "avahi-publish or DBus socket unavailable; skipping mDNS/Bonjour advertising"
@@ -219,12 +220,12 @@ setup_avahi() {
 }
 
 # Required samba inputs (may have defaults)
-[ -n "${TM_USERNAME}" ] || die "TM_USERNAME missing"
-[ -n "${TM_GROUPNAME}" ] || die "TM_GROUPNAME missing"
-[ -n "${TM_PASSWORD}" ] || die "TM_PASSWORD missing"
-[ -n "${TM_SHARE_NAME}" ] || die "TM_SHARE_NAME missing"
-[ -n "${TM_UID}" ] || die "TM_UID missing"
-[ -n "${TM_GID}" ] || die "TM_GID missing"
+[ -n "${TM_SHARE}" ] || die "TM_SHARE missing"
+[ -n "${SMB_USER}" ] || die "SMB_USER missing"
+[ -n "${SMB_GROUP}" ] || die "SMB_GROUP missing"
+[ -n "${SMB_PASS}" ] || die "SMB_PASS missing"
+[ -n "${SMB_UID}" ] || die "SMB_UID missing"
+[ -n "${SMB_GID}" ] || die "SMB_GID missing"
 
 # Set up system
 mkdir -p /mnt/timecapsule
@@ -232,28 +233,27 @@ ensure_unix_identities
 
 # Set up AFP mount point
 AFP_URL=${AFP_URL:-"afp://${AFP_USER}:${AFP_PASS}@${AFP_HOST}/${AFP_SHARE}"}
-log "Mounting ${AFP_URL} -> /mnt/timecapsule as user=${TM_USERNAME},group=${TM_GROUPNAME}"
-mount_afp -o user=${TM_USERNAME},group=${TM_GROUPNAME} "${AFP_URL}" /mnt/timecapsule
+log "Mounting ${AFP_URL} -> /mnt/timecapsule as user=${SMB_USER},group=${SMB_GROUP}"
+mount_afp -o user=${SMB_USER},group=${SMB_GROUP} "${AFP_URL}" /mnt/timecapsule
 log "Mounted ${AFP_URL}"
 
-# Clean up any stale TM artefacts before exporting via SMB
+# Clean up any stale TM artifacts before exporting via SMB
 clean_stale_timemachine_artifacts
 
 # Start AFP keepalive loop
 start_afp_keepalive
 
-# Set up Samba
+# Set up Samba config
 prepare_samba_config
 setup_avahi
+# Set up Samba permissions
 mkdir -p /var/lib/samba/private /var/log/samba/cores
 chmod 0700 /var/log/samba/cores || true
-chown root:root /var/log/samba/cores 2>/dev/null || true
-log "Provisioning Samba user ${TM_USERNAME}"
-smbpasswd -L -a -n "${TM_USERNAME}"
-smbpasswd -L -e -n "${TM_USERNAME}"
-printf "%s\n%s\n" "${TM_PASSWORD}" "${TM_PASSWORD}" | smbpasswd -L -s "${TM_USERNAME}"
-chown -v "${TM_USERNAME}":"${TM_GROUPNAME}" /mnt/timecapsule
-chmod -v 777 /mnt/timecapsule
+log "Provisioning Samba user ${SMB_USER}"
+smbpasswd -L -a -n "${SMB_USER}"
+log "Enabling Samba user ${SMB_USER}"
+smbpasswd -L -e -n "${SMB_USER}"
+printf "%s\n%s\n" "${SMB_PASS}" "${SMB_PASS}" | smbpasswd -L -s "${SMB_USER}"
 
 # Clean up any stale samba PID files
 for PIDFILE in nmbd samba-bgqd smbd; do
