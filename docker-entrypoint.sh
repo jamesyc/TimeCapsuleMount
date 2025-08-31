@@ -232,7 +232,7 @@ mkdir -p /mnt/timecapsule
 ensure_unix_identities
 
 # Set up AFP mount point
-AFP_URL=${AFP_URL:-"afp://${AFP_USER}:${AFP_PASS}@${AFP_HOST}/${AFP_SHARE}"}
+AFP_URL=${AFP_URL:-"afp://${AFP_USER}:${AFP_PASS}@${AFP_HOST}/${TM_SHARE}"}
 log "Mounting ${AFP_URL} -> /mnt/timecapsule as user=${SMB_USER},group=${SMB_GROUP}"
 mount_afp -o user=${SMB_USER},group=${SMB_GROUP} "${AFP_URL}" /mnt/timecapsule
 log "Mounted ${AFP_URL}"
