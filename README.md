@@ -13,14 +13,16 @@ This creates a Docker container acting as a proxy between your Time Capsule and 
 The Docker container does not run its own Avahi service, instead just using the host's Avahi service (on the Rasbperry Pi, or a Arch Linux machine, etc), and just registers the Samba server with avahi-publish via dbus. 
 
 ## Setup Instructions
+Follow these instructions for setup on a Linux machine. Windows and Mac are not supported.
 
-#### Setup with Docker Compose (Preferred Method)
+### Docker Compose (Preferred Method)
+##### Setup
 1. Install Docker on the host machine
 2. Pull this repo to a folder on the host machine
 3. Copy the file `.env.example` to `.env` and set your username and password
 4. Run `docker compose up -d`
-
-#### Docker Compose Removal
+   
+##### Removal
 1. Run `docker compose down` to stop the container
 2. Delete the folder.
 
