@@ -212,8 +212,8 @@ setup_avahi() {
     avahi-publish -s "${AVAHI_INSTANCE_NAME}" _smb._tcp ${SMB_PORT} &
     avahi-publish -s "${AVAHI_INSTANCE_NAME}" _device-info._tcp 0 "model=${SMB_MIMIC_MODEL}" &
     avahi-publish -s "${AVAHI_INSTANCE_NAME}" _adisk._tcp 9 \
-      "dk0=adVN=${TM_SHARE},adVF=0x82" \
-      "sys=waMa=0,adVF=0x82" &
+      "dk0=adVN=${TM_SHARE},adVF=0x100" \
+      "sys=waMa=0,adVF=0x100" &
   else
     log "avahi-publish or DBus socket unavailable; skipping mDNS/Bonjour advertising"
   fi
