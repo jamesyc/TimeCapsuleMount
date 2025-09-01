@@ -1,12 +1,15 @@
 #!/bin/sh
 set -e
 
-# General configuration defaults
+# General sane configuration defaults
 TM_SHARE="${TM_SHARE:-Data}"
 
 # AFP setup
 AFP_KEEPALIVE="${AFP_KEEPALIVE:-60}"
 CLEAN_STALE_BUNDLE_LOCKS="${CLEAN_STALE_BUNDLE_LOCKS:-yes}"
+AFP_WATCHDOG_INTERVAL="${AFP_WATCHDOG_INTERVAL:-15}"
+AFP_BACKOFF="${AFP_REMOUNT_BACKOFF:-5}"
+AFP_MOUNT_OPTS="${AFP_MOUNT_OPTS:-user=${SMB_USER},group=${SMB_GROUP}}"
 
 # SMB setup defaults
 CUSTOM_SMB_CONF="${CUSTOM_SMB_CONF:-false}"
@@ -17,28 +20,28 @@ SMB_PASS="${SMB_PASS:-${AFP_PASS:-}}"
 # SMB conf defaults
 SMB_HIDE_SHARES="${SMB_HIDE_SHARES:-yes}"
 SMB_INHERIT_PERMISSIONS="${SMB_INHERIT_PERMISSIONS:-no}"
-SMB_LOG_LEVEL="${SMB_LOG_LEVEL:-3}"
+SMB_LOG_LEVEL="${SMB_LOG_LEVEL:-4}"
 SMB_PORT="${SMB_PORT:-445}"
 WORKGROUP="${WORKGROUP:-WORKGROUP}"
 SMB_NFS_ACES="${SMB_NFS_ACES:-no}"
 SMB_MIMIC_MODEL="${SMB_MIMIC_MODEL:-TimeCapsule8,119}"
 SMB_METADATA="${SMB_METADATA:-stream}"
-SMB_FRUIT_RESOURCE="${SMB_FRUIT_RESOURCE:-stream}"
+SMB_FRUIT_RESOURCE="${SMB_FRUIT_RESOURCE:-file}"
 SMB_FRUIT_ENCODING="${SMB_FRUIT_ENCODING:-native}"
 SMB_EA_SUPPORT="${SMB_EA_SUPPORT:-yes}"
 SMB_KEEPALIVE="${SMB_KEEPALIVE:-60}"
 SMB_DEADTIME="${SMB_DEADTIME:-0}"
-SMB_SMB2_LEASES="${SMB_SMB2_LEASES:-yes}"
-SMB_DURABLE_HANDLES="${SMB_DURABLE_HANDLES:-yes}"
+SMB_SMB2_LEASES="${SMB_SMB2_LEASES:-no}"
+SMB_DURABLE_HANDLES="${SMB_DURABLE_HANDLES:-no}"
 SMB_STREAMS_XATTR_PREFIX="${SMB_STREAMS_XATTR_PREFIX:-user.}"
 
 # Samba conf optionals
-SMB_AIO_READ_SIZE="${SMB_AIO_READ_SIZE:-}"
-SMB_AIO_WRITE_SIZE="${SMB_AIO_WRITE_SIZE:-}"
+SMB_AIO_READ_SIZE="${SMB_AIO_READ_SIZE:-0}"
+SMB_AIO_WRITE_SIZE="${SMB_AIO_WRITE_SIZE:-0}"
 SMB_FORCE_USER="${SMB_FORCE_USER:-${SMB_USER}}"
 
 # SMB share defaults
-SMB_VFS_OBJECTS="${SMB_VFS_OBJECTS:-fruit streams_xattr}"
+SMB_VFS_OBJECTS="${SMB_VFS_OBJECTS:-catia fruit streams_xattr}"
 VOLUME_SIZE_LIMIT="${VOLUME_SIZE_LIMIT:-0}"
 
 # Avahi setup
@@ -128,10 +131,15 @@ security = user
 server min protocol = SMB3
 ntlm auth = no
 server role = standalone server
+use sendfile = no
+strict locking = no
+posix locking = no
 smb ports = ${SMB_PORT}
 disable netbios = yes
 netbios name = ${AVAHI_INSTANCE_NAME}
 workgroup = ${WORKGROUP}
+kernel oplocks = no
+kernel change notify = no
 fruit:aapl = yes
 fruit:nfs_aces = ${SMB_NFS_ACES}
 fruit:model = ${SMB_MIMIC_MODEL}
@@ -142,13 +150,14 @@ fruit:veto_appledouble = no
 fruit:posix_rename = yes
 fruit:zero_file_id = yes
 fruit:wipe_intentionally_left_blank_rfork = yes
-fruit:delete_empty_adfiles = yes
-ea support = ${SMB_EA_SUPPORT}
-keepalive = ${SMB_KEEPALIVE}
-deadtime = ${SMB_DEADTIME}
-smb2 leases = ${SMB_SMB2_LEASES}
-durable handles = ${SMB_DURABLE_HANDLES}
-streams_xattr:prefix = ${SMB_STREAMS_XATTR_PREFIX}
+  fruit:delete_empty_adfiles = yes
+  ea support = ${SMB_EA_SUPPORT}
+  keepalive = ${SMB_KEEPALIVE}
+  deadtime = ${SMB_DEADTIME}
+  smb2 leases = ${SMB_SMB2_LEASES}
+  durable handles = ${SMB_DURABLE_HANDLES}
+  streams_xattr:prefix = ${SMB_STREAMS_XATTR_PREFIX}
+  streams_xattr:store_stream_type = no
 EOF
 }
 
@@ -164,6 +173,8 @@ append_smb_share() {
    vfs objects = ${SMB_VFS_OBJECTS}
    fruit:time machine = yes
    fruit:time machine max size = ${VOLUME_SIZE_LIMIT}
+   spotlight = no
+   strict sync = yes
 EOF
 
   # Append optional AIO settings if provided
@@ -195,6 +206,7 @@ start_afp_keepalive() {
     {
       touch /mnt/timecapsule/.afp_keepalive 2>/dev/null || true
       while true; do
+        # Probe inside the mount (not just the mountpoint) to detect ENOTCONN
         stat /mnt/timecapsule/.afp_keepalive >/dev/null 2>&1 || true
         sleep "${AFP_KEEPALIVE}"
       done
@@ -205,6 +217,49 @@ start_afp_keepalive() {
   fi
 }
 
+# Return 0 if the AFP mount appears healthy, 1 otherwise
+afp_mount_healthy() {
+  local target="${1:-/mnt/timecapsule}"
+  # Must be listed in mounts
+  if ! awk -v m="$target" '$2==m {found=1} END {exit !found}' /proc/self/mounts; then
+    return 1
+  fi
+  # Check an operation within the mount to catch FUSE "Transport endpoint" states
+  stat "$target/.afp_keepalive" >/dev/null 2>&1
+}
+
+# Watch for a broken AFP FUSE mount and auto-remount
+start_afp_watchdog() {
+  TARGET="/mnt/timecapsule"
+  URL="${AFP_URL}"
+
+  {
+    while true; do
+      sleep "${AFP_WATCHDOG_INTERVAL}"
+      # If the mount is unhealthy (e.g., Transport endpoint is not connected), try to remount
+      if ! afp_mount_healthy "${TARGET}"; then
+        log "AFP watchdog: mount unhealthy; attempting remount"
+        # Prefer FUSE unmount helpers when available; fall back to lazy umount
+        if command -v afp_client >/dev/null 2>&1; then
+          afp_client unmount "${TARGET}" >/dev/null 2>&1 || true
+        fi
+        if command -v fusermount3 >/dev/null 2>&1; then
+          fusermount3 -uz "${TARGET}" >/dev/null 2>&1 || true
+        fi
+        umount -l "${TARGET}" >/dev/null 2>&1 || true
+
+        if mount_afp -o "${AFP_MOUNT_OPTS}" "${URL}" "${TARGET}" >/dev/null 2>&1; then
+          log "AFP watchdog: remounted successfully"
+        else
+          err "AFP watchdog: remount failed; retrying in ${AFP_BACKOFF}s"
+          sleep "${AFP_BACKOFF}"
+        fi
+      fi
+    done
+  } &
+  log "AFP watchdog started (interval=${AFP_WATCHDOG_INTERVAL}s, backoff=${AFP_BACKOFF}s)"
+}
+
 # Configure mDNS/Bonjour advertisement using host Avahi (DBus)
 setup_avahi() {
   if command -v avahi-publish >/dev/null 2>&1 && [ -S /run/dbus/system_bus_socket ]; then
@@ -212,8 +267,8 @@ setup_avahi() {
     avahi-publish -s "${AVAHI_INSTANCE_NAME}" _smb._tcp ${SMB_PORT} &
     avahi-publish -s "${AVAHI_INSTANCE_NAME}" _device-info._tcp 0 "model=${SMB_MIMIC_MODEL}" &
     avahi-publish -s "${AVAHI_INSTANCE_NAME}" _adisk._tcp 9 \
-      "dk0=adVN=${TM_SHARE},adVF=0x100" \
-      "sys=waMa=0,adVF=0x100" &
+      "dk0=adVN=${TM_SHARE},adVF=0x82" \
+      "sys=waMa=0,adVF=0x82" &
   else
     log "avahi-publish or DBus socket unavailable; skipping mDNS/Bonjour advertising"
   fi
@@ -234,7 +289,7 @@ ensure_unix_identities
 # Set up AFP mount point
 AFP_URL=${AFP_URL:-"afp://${AFP_USER}:${AFP_PASS}@${AFP_HOST}/${TM_SHARE}"}
 log "Mounting ${AFP_URL} -> /mnt/timecapsule as user=${SMB_USER},group=${SMB_GROUP}"
-mount_afp -o user=${SMB_USER},group=${SMB_GROUP} "${AFP_URL}" /mnt/timecapsule
+mount_afp -o "${AFP_MOUNT_OPTS}" "${AFP_URL}" /mnt/timecapsule
 log "Mounted ${AFP_URL}"
 
 # Clean up any stale TM artifacts before exporting via SMB
@@ -242,6 +297,7 @@ clean_stale_timemachine_artifacts
 
 # Start AFP keepalive loop
 start_afp_keepalive
+start_afp_watchdog
 
 # Set up Samba config
 prepare_samba_config
