@@ -3,6 +3,7 @@ set -e
 
 # General sane configuration defaults
 TM_SHARE="${TM_SHARE:-Data}"
+TARGET="${TARGET:-/mnt/timecapsule}"
 
 # AFP setup
 AFP_KEEPALIVE="${AFP_KEEPALIVE:-60}"
@@ -66,7 +67,7 @@ die() { err "$*"; exit 1; }
 clean_stale_timemachine_artifacts() {
   [ "${CLEAN_STALE_BUNDLE_LOCKS}" = "yes" ] || { log "Stale bundle cleanup disabled"; return; }
 
-  BASE="/mnt/timecapsule"
+  BASE="${TARGET}"
   [ -d "${BASE}" ] || return
 
   for bundle in "${BASE}"/*.sparsebundle; do
@@ -170,7 +171,7 @@ append_smb_share() {
   cat >> /etc/samba/smb.conf <<EOF
 
 [${TM_SHARE}]
-   path = /mnt/timecapsule
+   path = ${TARGET}
    inherit permissions = ${SMB_INHERIT_PERMISSIONS}
    read only = no
    valid users = ${SMB_USER}
@@ -208,10 +209,10 @@ start_afp_keepalive() {
   # Numeric and greater than zero
   if [ "${AFP_KEEPALIVE}" -gt 0 ] 2>/dev/null; then
     {
-      touch /mnt/timecapsule/.afp_keepalive 2>/dev/null || true
+      touch "${TARGET}/.afp_keepalive" 2>/dev/null || true
       while true; do
         # Probe inside the mount (not just the mountpoint) to detect ENOTCONN
-        stat /mnt/timecapsule/.afp_keepalive >/dev/null 2>&1 || true
+        stat "${TARGET}/.afp_keepalive" >/dev/null 2>&1 || true
         sleep "${AFP_KEEPALIVE}"
       done
     } &
@@ -223,15 +224,14 @@ start_afp_keepalive() {
 
 # Return 0 if the AFP mount appears healthy, 1 otherwise
 afp_mount_healthy() {
-  target="${1:-/mnt/timecapsule}"
   # Must be listed in mounts
-  if ! awk -v m="$target" '$2==m {found=1} END {exit !found}' /proc/self/mounts; then
+  if ! awk -v m="${TARGET}" '$2==m {found=1} END {exit !found}' /proc/self/mounts; then
     return 1
   fi
   # Check an operation within the mount to catch FUSE "Transport endpoint" states.
   # Retry a few times in case of transient errors.
   for _ in $(seq 1 "${AFP_HEALTHCHECK_RETRIES}"); do
-    stat "$target/.afp_keepalive" >/dev/null 2>&1 && return 0
+    stat "${TARGET}/.afp_keepalive" >/dev/null 2>&1 && return 0
     sleep "${AFP_HEALTHCHECK_DELAY}"
   done
   return 1
@@ -240,8 +240,6 @@ afp_mount_healthy() {
 # Watch for a broken AFP FUSE mount and auto-remount
 start_afp_watchdog() {
   [ "${AFP_WATCHDOG_DISABLE}" = "yes" ] && { log "AFP watchdog disabled"; return; }
-  TARGET="/mnt/timecapsule"
-  URL="${AFP_URL}"
   threshold="${AFP_WATCHDOG_FAILURE_THRESHOLD}"
   failures=0
 
@@ -249,7 +247,7 @@ start_afp_watchdog() {
     while true; do
       sleep "${AFP_WATCHDOG_INTERVAL}"
       # If the mount is unhealthy (e.g., Transport endpoint is not connected), try to remount
-      if ! afp_mount_healthy "${TARGET}"; then
+      if ! afp_mount_healthy; then
         failures=$((failures+1))
         if [ "$failures" -lt "$threshold" ]; then
           log "AFP watchdog: mount unhealthy (${failures}/${threshold}); waiting"
@@ -266,7 +264,7 @@ start_afp_watchdog() {
         fi
         umount -l "${TARGET}" >/dev/null 2>&1 || true
 
-        if mount_afp -o "${AFP_MOUNT_OPTS}" "${URL}" "${TARGET}" >/dev/null 2>&1; then
+        if mount_afp -o "${AFP_MOUNT_OPTS}" "${AFP_URL}" "${TARGET}" >/dev/null 2>&1; then
           log "AFP watchdog: remounted successfully"
         else
           err "AFP watchdog: remount failed; retrying in ${AFP_BACKOFF}s"
@@ -303,13 +301,13 @@ setup_avahi() {
 [ -n "${SMB_GID}" ] || die "SMB_GID missing"
 
 # Set up system
-mkdir -p /mnt/timecapsule
+mkdir -p "${TARGET}"
 ensure_unix_identities
 
 # Set up AFP mount point
 AFP_URL=${AFP_URL:-"afp://${AFP_USER}:${AFP_PASS}@${AFP_HOST}/${TM_SHARE}"}
-log "Mounting ${AFP_URL} -> /mnt/timecapsule as user=${SMB_USER},group=${SMB_GROUP}"
-mount_afp -o "${AFP_MOUNT_OPTS}" "${AFP_URL}" /mnt/timecapsule
+log "Mounting ${AFP_URL} -> ${TARGET} as user=${SMB_USER},group=${SMB_GROUP}"
+mount_afp -o "${AFP_MOUNT_OPTS}" "${AFP_URL}" "${TARGET}"
 log "Mounted ${AFP_URL}"
 
 # Clean up any stale TM artifacts before exporting via SMB
