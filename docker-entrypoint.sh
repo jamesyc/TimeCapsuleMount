@@ -10,6 +10,10 @@ CLEAN_STALE_BUNDLE_LOCKS="${CLEAN_STALE_BUNDLE_LOCKS:-yes}"
 AFP_WATCHDOG_INTERVAL="${AFP_WATCHDOG_INTERVAL:-15}"
 AFP_BACKOFF="${AFP_REMOUNT_BACKOFF:-5}"
 AFP_MOUNT_OPTS="${AFP_MOUNT_OPTS:-user=${SMB_USER},group=${SMB_GROUP}}"
+AFP_WATCHDOG_DISABLE="${AFP_WATCHDOG_DISABLE:-no}"
+AFP_WATCHDOG_FAILURE_THRESHOLD="${AFP_WATCHDOG_FAILURE_THRESHOLD:-3}"
+AFP_HEALTHCHECK_RETRIES="${AFP_HEALTHCHECK_RETRIES:-3}"
+AFP_HEALTHCHECK_DELAY="${AFP_HEALTHCHECK_DELAY:-1}"
 
 # SMB setup defaults
 CUSTOM_SMB_CONF="${CUSTOM_SMB_CONF:-false}"
@@ -219,26 +223,40 @@ start_afp_keepalive() {
 
 # Return 0 if the AFP mount appears healthy, 1 otherwise
 afp_mount_healthy() {
-  local target="${1:-/mnt/timecapsule}"
+  target="${1:-/mnt/timecapsule}"
   # Must be listed in mounts
   if ! awk -v m="$target" '$2==m {found=1} END {exit !found}' /proc/self/mounts; then
     return 1
   fi
-  # Check an operation within the mount to catch FUSE "Transport endpoint" states
-  stat "$target/.afp_keepalive" >/dev/null 2>&1
+  # Check an operation within the mount to catch FUSE "Transport endpoint" states.
+  # Retry a few times in case of transient errors.
+  for _ in $(seq 1 "${AFP_HEALTHCHECK_RETRIES}"); do
+    stat "$target/.afp_keepalive" >/dev/null 2>&1 && return 0
+    sleep "${AFP_HEALTHCHECK_DELAY}"
+  done
+  return 1
 }
 
 # Watch for a broken AFP FUSE mount and auto-remount
 start_afp_watchdog() {
+  [ "${AFP_WATCHDOG_DISABLE}" = "yes" ] && { log "AFP watchdog disabled"; return; }
   TARGET="/mnt/timecapsule"
   URL="${AFP_URL}"
+  threshold="${AFP_WATCHDOG_FAILURE_THRESHOLD}"
+  failures=0
 
   {
     while true; do
       sleep "${AFP_WATCHDOG_INTERVAL}"
       # If the mount is unhealthy (e.g., Transport endpoint is not connected), try to remount
       if ! afp_mount_healthy "${TARGET}"; then
+        failures=$((failures+1))
+        if [ "$failures" -lt "$threshold" ]; then
+          log "AFP watchdog: mount unhealthy (${failures}/${threshold}); waiting"
+          continue
+        fi
         log "AFP watchdog: mount unhealthy; attempting remount"
+        failures=0
         # Prefer FUSE unmount helpers when available; fall back to lazy umount
         if command -v afp_client >/dev/null 2>&1; then
           afp_client unmount "${TARGET}" >/dev/null 2>&1 || true
@@ -254,17 +272,19 @@ start_afp_watchdog() {
           err "AFP watchdog: remount failed; retrying in ${AFP_BACKOFF}s"
           sleep "${AFP_BACKOFF}"
         fi
+      else
+        failures=0
       fi
     done
   } &
-  log "AFP watchdog started (interval=${AFP_WATCHDOG_INTERVAL}s, backoff=${AFP_BACKOFF}s)"
+  log "AFP watchdog started (interval=${AFP_WATCHDOG_INTERVAL}s, backoff=${AFP_BACKOFF}s, failure-threshold=${threshold})"
 }
 
 # Configure mDNS/Bonjour advertisement using host Avahi (DBus)
 setup_avahi() {
   if command -v avahi-publish >/dev/null 2>&1 && [ -S /run/dbus/system_bus_socket ]; then
     log "Publishing mDNS/Bonjour services via host Avahi (DBus)"
-    avahi-publish -s "${AVAHI_INSTANCE_NAME}" _smb._tcp ${SMB_PORT} &
+    avahi-publish -s "${AVAHI_INSTANCE_NAME}" _smb._tcp "${SMB_PORT}" &
     avahi-publish -s "${AVAHI_INSTANCE_NAME}" _device-info._tcp 0 "model=${SMB_MIMIC_MODEL}" &
     avahi-publish -s "${AVAHI_INSTANCE_NAME}" _adisk._tcp 9 \
       "dk0=adVN=${TM_SHARE},adVF=0x82" \
