@@ -70,7 +70,7 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 # Report unhealthy when AFP mount’s keepalive file can’t be accessed
-HEALTHCHECK --interval=45s --timeout=5s --start-period=60s --retries=3 \
+HEALTHCHECK --interval=45s --timeout=15s --start-period=60s --retries=5 \
 CMD ["sh","-c","stat /mnt/timecapsule/.afp_keepalive >/dev/null 2>&1"]
 # Default command handed to the entrypoint
 CMD ["smbd","-F","--no-process-group","--configfile=/etc/samba/smb.conf"]
