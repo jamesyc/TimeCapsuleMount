@@ -1,0 +1,84 @@
+services:
+  timecapsule-mount:
+    build:
+      context: .
+    container_name: timecapsule-mount
+    privileged: true
+    env_file:
+      - .env
+    devices:
+      - "/dev/fuse:/dev/fuse"
+    cap_add:
+      - SYS_ADMIN
+      - SETPCAP
+    security_opt:
+      - apparmor:unconfined
+      - seccomp:unconfined
+    tmpfs:
+      - /run/samba
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - /run/avahi-daemon/socket:/run/avahi-daemon/socket
+      # Share the mount target with rshared propagation for the bind/FUSE mount for external SMB
+      # - type: bind
+      #   source: ${TIMEMACHINE_BACKING_PATH:-/srv/timecapsule}
+      #   target: /mnt/timecapsule
+      #   bind:
+      #     propagation: rshared
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  timemachine-smb:
+    image: mbentley/timemachine:smb
+    container_name: timemachine-smb
+    profiles:
+      - smb
+    restart: unless-stopped
+    depends_on:
+      timecapsule-mount:
+        condition: service_healthy
+    # Runs on an isolated macvlan network with its own IP for clean mDNS
+    networks:
+      timemachine:
+        ipv4_address: ${TIMEMACHINE_IP:-192.168.1.250}
+    tmpfs:
+      - /run/samba
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    environment:
+      # SMB user/group inside the mbentley image
+      - TM_USERNAME=${SYSTEM_USER:-timemachine}
+      - TM_GROUPNAME=${SYSTEM_GROUP:-timemachine}
+      - TM_UID=${SYSTEM_UID:-1000}
+      - TM_GID=${SYSTEM_GID:-1000}
+      - PASSWORD=${TM_PASS}
+      - SHARE_NAME=${TM_SHARE:-Data}
+      - VOLUME_SIZE_LIMIT=${VOLUME_SIZE_LIMIT:-0}
+      # Avoid chowning the FUSE-backed path
+      - SET_PERMISSIONS=false
+      # Optional parity with previous config
+      - MIMIC_MODEL=${SMB_MIMIC_MODEL:-TimeCapsule8,119}
+      - WORKGROUP=${WORKGROUP:-WORKGROUP}
+      - SMB_VFS_OBJECTS=${SMB_VFS_OBJECTS:-fruit streams_xattr}
+    volumes:
+      # Mount the same host backing path which receives the upstream bind mount
+      - type: bind
+        source: ${TIMEMACHINE_BACKING_PATH:-/srv/timecapsule}
+        target: /opt/timemachine
+
+networks:
+  timemachine:
+    driver: macvlan
+    driver_opts:
+      parent: ${MACVLAN_PARENT:-eth0}
+    ipam:
+      config:
+        - subnet: ${MACVLAN_SUBNET:-192.168.1.0/24}
+          gateway: ${MACVLAN_GATEWAY:-192.168.1.1}
+          ip_range: ${MACVLAN_IP_RANGE:-192.168.1.0/24}
