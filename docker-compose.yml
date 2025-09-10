@@ -36,7 +36,7 @@ services:
     image: mbentley/timemachine:smb
     container_name: timemachine-smb
     profiles:
-      - smb
+      - smb # Remove to enable this container
     restart: unless-stopped
     depends_on:
       timecapsule-mount:
@@ -60,12 +60,10 @@ services:
       - PASSWORD=${TM_PASS}
       - SHARE_NAME=${TM_SHARE:-Data}
       - VOLUME_SIZE_LIMIT=${VOLUME_SIZE_LIMIT:-0}
-      # Avoid chowning the FUSE-backed path
       - SET_PERMISSIONS=false
-      # Optional parity with previous config
       - MIMIC_MODEL=${SMB_MIMIC_MODEL:-TimeCapsule8,119}
       - WORKGROUP=${WORKGROUP:-WORKGROUP}
-      - SMB_VFS_OBJECTS=${SMB_VFS_OBJECTS:-fruit streams_xattr}
+      - SMB_VFS_OBJECTS=${SMB_VFS_OBJECTS:-catia fruit}
     volumes:
       # Mount the same host backing path which receives the upstream bind mount
       - type: bind
