@@ -8,64 +8,71 @@ LOG_TAG="server"
 # Global smb.conf section
 SMB_GLOBAL_CONF="$(cat <<EOF
 [global]
-access based share enum = ${SMB_HIDE_SHARES}
-hide unreadable = ${SMB_HIDE_SHARES}
-inherit permissions = ${SMB_INHERIT_PERMISSIONS}
-load printers = no
-log file = /var/log/samba/log.%m
-logging = file
-max log size = 1000
-log level = ${SMB_LOG_LEVEL}
-security = user
-server min protocol = SMB3
-ntlm auth = no
-server role = standalone server
-#use sendfile = no
-#strict locking = no
-#posix locking = no
-smb ports = ${SMB_PORT}
-disable netbios = yes
-netbios name = ${AVAHI_INSTANCE_NAME}
-workgroup = ${WORKGROUP}
-#kernel oplocks = no
-#kernel change notify = no
-fruit:aapl = yes
-fruit:nfs_aces = ${SMB_NFS_ACES}
-fruit:model = ${SMB_MIMIC_MODEL}
-fruit:metadata = ${SMB_METADATA}
-fruit:resource = ${SMB_FRUIT_RESOURCE}
-fruit:encoding = ${SMB_FRUIT_ENCODING}
-fruit:veto_appledouble = no
-fruit:posix_rename = yes
-fruit:zero_file_id = yes
-fruit:wipe_intentionally_left_blank_rfork = yes
-fruit:delete_empty_adfiles = yes
-ea support = ${SMB_EA_SUPPORT}
-keepalive = ${SMB_KEEPALIVE}
-deadtime = ${SMB_DEADTIME}
-smb2 leases = ${SMB_SMB2_LEASES}
-durable handles = ${SMB_DURABLE_HANDLES}
-streams_xattr:prefix = ${SMB_STREAMS_XATTR_PREFIX}
-streams_xattr:store_stream_type = no
-map hidden = no
-map system = no
-map archive = no
-map readonly = no
+  # Identity/networking
+  server role = standalone server
+  workgroup = ${WORKGROUP}
+  netbios name = ${AVAHI_INSTANCE_NAME}
+  disable netbios = yes
+  smb ports = ${SMB_PORT}
+  # Protocol auth
+  security = user
+  server min protocol = SMB3
+  ntlm auth = no
+  # macOS support (fruit baseline)
+  vfs objects = catia fruit
+  fruit:aapl = yes
+  fruit:model = ${SMB_MIMIC_MODEL}
+  fruit:encoding = ${SMB_FRUIT_ENCODING}
+  fruit:posix_rename = yes
+  fruit:veto_appledouble = no
+  fruit:zero_file_id = yes
+  fruit:wipe_intentionally_left_blank_rfork = yes
+  fruit:delete_empty_adfiles = yes
+  fruit:metadata = ${SMB_METADATA}
+  fruit:resource = ${SMB_FRUIT_RESOURCE}
+  # File/locking semantics (good for FUSE backend)
+  kernel oplocks = no
+  posix locking = no
+  strict locking = no
+  kernel change notify = no
+  smb2 leases = ${SMB_SMB2_LEASES}
+  durable handles = ${SMB_DURABLE_HANDLES}
+  use sendfile = no
+  # Visibility
+  access based share enum = ${SMB_HIDE_SHARES}
+  map hidden = no
+  map system = no
+  map archive = no
+  map readonly = no
+  # Logging
+  keepalive = ${SMB_KEEPALIVE}
+  deadtime = ${SMB_DEADTIME}
+  logging = file
+  log level = ${SMB_LOG_LEVEL}
+  log file = /var/log/samba/log.%m
+  max log size = 1000
+  load printers = no
 EOF
 )"
 
 # Share section for smb.conf 
 SMB_SHARE_CONF="$(cat <<EOF
 [${TM_SHARE}]
-   path = ${TARGET}
-   inherit permissions = ${SMB_INHERIT_PERMISSIONS}
-   read only = no
-   valid users = ${SYSTEM_USER}
-   vfs objects = ${SMB_VFS_OBJECTS}
-   fruit:time machine = yes
-   fruit:time machine max size = ${VOLUME_SIZE_LIMIT}
-   #spotlight = no
-   #strict sync = yes
+  path = ${TARGET}
+  browseable = yes
+  read only = no
+  valid users = ${SYSTEM_USER}
+  # macOS Time Machine
+  vfs objects = catia fruit
+  fruit:time machine = yes
+  fruit:time machine max size = ${VOLUME_SIZE_LIMIT}
+  spotlight = no
+  # Permissions
+  force user = ${SMB_FORCE_USER}
+  inherit permissions = ${SMB_INHERIT_PERMISSIONS}
+  use sendfile = no
+  create mask = 0660
+  directory mask = 0770
 EOF
 )"
 
@@ -75,16 +82,6 @@ write_smb_global() {
 
 append_smb_share() {
   printf "%s\n" "${SMB_SHARE_CONF}" >> /etc/samba/smb.conf
-
-  if [ -n "${SMB_AIO_READ_SIZE}" ]; then
-    echo "   aio read size = ${SMB_AIO_READ_SIZE}" >> /etc/samba/smb.conf
-  fi
-  if [ -n "${SMB_AIO_WRITE_SIZE}" ]; then
-    echo "   aio write size = ${SMB_AIO_WRITE_SIZE}" >> /etc/samba/smb.conf
-  fi
-  if [ -n "${SMB_FORCE_USER}" ]; then
-    echo "   force user = ${SMB_FORCE_USER}" >> /etc/samba/smb.conf
-  fi
 }
 
 prepare_samba_config() {
