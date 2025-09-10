@@ -29,8 +29,24 @@ auth "${TM_HOST}" "${TM_USER}" "${TM_PASS}"
 EOF
 )"
 
+unmount_target() {
+  # TARGET is a bind mount of the share path
+  umount -l "${TARGET}" >/dev/null 2>&1 || true
+}
+
+unmount_smbnetfs_root() {
+  # Prefer FUSE-aware unmounts for smbnetfs root
+  if command -v fusermount3 >/dev/null 2>&1; then
+    fusermount3 -uz "${SMBNETFS_MOUNT_ROOT}" >/dev/null 2>&1 || true
+  elif command -v fusermount >/dev/null 2>&1; then
+    fusermount -uz "${SMBNETFS_MOUNT_ROOT}" >/dev/null 2>&1 || true
+  else
+    umount -l "${SMBNETFS_MOUNT_ROOT}" >/dev/null 2>&1 || true
+  fi
+}
+
 resolve_share_path() {
-  local root="$1" host="$2" share="$3"
+  root=$1; host=$2; share=$3
   [ -d "$root" ] || return 1
   for p in "$root/$host/$share" "$root/WORKGROUP/$host/$share" "$root/MSHOME/$host/$share"; do
     [ -d "$p" ] && { echo "$p"; return 0; }
@@ -69,17 +85,17 @@ mount_upstream() {
   [ -n "${SHARE_PATH}" ] || die "Unable to locate ${TM_HOST}/${TM_SHARE} via smbnetfs"
   log "Found share path: ${SHARE_PATH}"
 
-  mkdir -p "${TARGET}"
   if mountpoint -q "${TARGET}"; then
-    umount -l "${TARGET}" >/dev/null 2>&1 || true
+    unmount_target
+    mountpoint -q "${TARGET}" && log "Warning: Failed to unmount ${TARGET}"
   fi
   log "Bind-mounting ${SHARE_PATH} -> ${TARGET}"
   mount --bind "${SHARE_PATH}" "${TARGET}"
 }
 
 remount_upstream() {
-  umount -l "${TARGET}" >/dev/null 2>&1 || true
-  umount -l "${SMBNETFS_MOUNT_ROOT}" >/dev/null 2>&1 || true
+  unmount_target
+  unmount_smbnetfs_root
   pkill -f "smbnetfs ${SMBNETFS_MOUNT_ROOT}" >/dev/null 2>&1 || true
   mount_upstream
 }
