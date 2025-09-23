@@ -30,7 +30,8 @@ Follow these instructions for setup on a Linux machine. Windows and Mac are not 
 4. Run `docker compose up -d`
 
 Then just open Finder on your Mac and mount the disk under Network, and then open Time Machine settings to start a backup. 
-![Screenshot of Time Machine settings](https://imgur.com/JHpzl3U)
+<img width="1438" height="1042" alt="image" src="https://github.com/user-attachments/assets/87b16f73-c9a2-424e-b41f-d26bcc72d891" />
+
 
 ##### Removal
 1. Run `docker compose down` to stop the container
