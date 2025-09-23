@@ -28,7 +28,10 @@ Follow these instructions for setup on a Linux machine. Windows and Mac are not 
 2. Pull this repo to a folder on the host machine
 3. Copy the file `.env.example` to `.env` and set `TM_HOST`, `TM_USER`, `TM_PASS` (optionally `TM_SHARE`, `SYSTEM_UID`, `SYSTEM_GID`)
 4. Run `docker compose up -d`
-   
+
+Then just open Finder on your Mac and mount the disk under Network, and then open Time Machine settings to start a backup. 
+![Screenshot of Time Machine settings](https://imgur.com/JHpzl3U)
+
 ##### Removal
 1. Run `docker compose down` to stop the container
 2. Delete the folder.
